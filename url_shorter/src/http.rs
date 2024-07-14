@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::storage::{InMemoryStorage, Storage};
+use crate::storage::{InMemoryStorage, Storage, StorageError};
 use anyhow::Result;
 use axum::{
     extract::{Path, State},
@@ -10,7 +10,31 @@ use axum::{
 use axum_macros::debug_handler;
 use nanoid::nanoid;
 use serde::Deserialize;
+use thiserror::Error;
 use tracing::info;
+
+#[derive(Error, Debug)]
+pub enum HttpError {
+    #[error("url not found")]
+    UrlNotFound,
+    #[error("unknown error")]
+    Unknown,
+}
+
+impl axum::response::IntoResponse for HttpError {
+    fn into_response(self) -> axum::response::Response {
+        match self {
+            HttpError::UrlNotFound => axum::response::Response::builder()
+                .status(404)
+                .body("url not found".into())
+                .unwrap(),
+            _ => axum::response::Response::builder()
+                .status(500)
+                .body(format!("{:?}", self).into())
+                .unwrap(),
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct AppState {
@@ -31,13 +55,14 @@ async fn get_short(
     State(state): State<AppState>,
     Form(form_data): Form<FormData>,
 ) -> impl axum::response::IntoResponse {
-    match state.storage.get(form_data.url.clone()) {
-        Some(url) => url,
-        None => {
-            let short_url = generate_short_url();
-            state.storage.set(short_url.clone(), form_data.url.clone());
-            info!("{} -> {}", form_data.url, short_url);
-            short_url
+    loop {
+        let short_url = generate_short_url();
+        match state.storage.set(short_url.clone(), form_data.url.clone()) {
+            Ok(_) => {
+                info!("{} -> {}", form_data.url, short_url);
+                return short_url;
+            }
+            Err(StorageError::AlreadyExists) => continue,
         }
     }
 }
@@ -46,17 +71,19 @@ async fn get_short(
 async fn to_normal_url(
     Path(url): Path<String>,
     State(state): State<AppState>,
-) -> impl axum::response::IntoResponse {
+) -> Result<String, HttpError> {
     let html = match state.storage.get(url.clone()) {
         Some(id) => id,
-        None => "index.html".to_owned(),
+        None => {
+            return Err(HttpError::UrlNotFound);
+        }
     };
     info!("{} -> {}", url.clone(), html);
 
     let path = std::path::Path::new("./url_shorter/htmls/").join(html);
     match tokio::fs::read_to_string(path).await {
-        Ok(html) => html,
-        Err(_) => "index.html".to_owned(),
+        Ok(html) => Ok(html),
+        Err(_) => Err(HttpError::Unknown),
     }
 }
 

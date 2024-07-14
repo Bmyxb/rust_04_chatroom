@@ -13,6 +13,7 @@ dashmap = "6.0.1"
 futures = "0.3.30"
 nanoid = "0.4.0"
 serde = { version = "1.0.204", features = ["derive"] }
+thiserror = "1.0.61"
 tokio = { version = "1.38.0", features = ["full"] }
 tokio-util = { version = "0.7.11", features = ["full"] }
 tracing = "0.1.40"
